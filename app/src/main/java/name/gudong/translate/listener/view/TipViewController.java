@@ -21,167 +21,173 @@
 package name.gudong.translate.listener.view;
 
 import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
-import android.animation.ObjectAnimator;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.os.Build;
+import android.preference.PreferenceManager;
+import android.support.v4.app.NotificationCompat;
+import android.util.Log;
 import android.view.Gravity;
-import android.view.MotionEvent;
-import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.RelativeLayout;
-import android.widget.TextView;
-import android.widget.Toast;
 
-import com.litesuits.orm.db.assit.QueryBuilder;
 import com.orhanobut.logger.Logger;
 
-import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
 
-import me.gudong.translate.R;
-import name.gudong.translate.GDApplication;
-import name.gudong.translate.mvp.model.entity.Result;
-import name.gudong.translate.util.SpUtils;
-import name.gudong.translate.util.ViewUtil;
+import name.gudong.translate.R;
+import name.gudong.translate.manager.ReciteModulePreference;
+import name.gudong.translate.mvp.model.entity.translate.Result;
+import name.gudong.translate.ui.activitys.MainActivity;
+import name.gudong.translate.util.Utils;
 import rx.Observable;
 import rx.android.schedulers.AndroidSchedulers;
 import rx.functions.Action1;
 import rx.functions.Func1;
 
-public class TipViewController implements View.OnClickListener, View.OnTouchListener {
-    private static final int DURATION_TIME = 300;
+import static name.gudong.translate.mvp.presenters.MainPresenter.KEY_REQUEST_CODE_FOR_NOTI;
 
+public class TipViewController {
     private WindowManager mWindowManager;
-
     private Context mContext;
-    private ViewDismissHandler mViewDismissHandler;
+    /**
+     * cache mul tip view
+     */
+    private Map<Result, TipView> mMapTipView = new WeakHashMap<>();
 
-    //顶部提示框
-    private LinearLayout mHeadsUpView;
-    private RelativeLayout mContentView;
-    private TextView mTvSrc;
-    private LinearLayout mLlDst;
-    private Button mButtonFavorite;
+    private Observable mHideTipTask;
+
+    private ReciteModulePreference mRecitePreference;
 
     public TipViewController(Context application) {
         mContext = application;
         mWindowManager = (WindowManager) application.getSystemService(Context.WINDOW_SERVICE);
-
-        LinearLayout view = (LinearLayout) View.inflate(mContext, R.layout.pop_view, null);
-
-        // display content
-        mTvSrc = (TextView) view.findViewById(R.id.tv_pop_src);
-        mLlDst = (LinearLayout) view.findViewById(R.id.ll_pop_dst);
-        mButtonFavorite = (Button) view.findViewById(R.id.bt_action);
-
-        mHeadsUpView = view;
-        mContentView = (RelativeLayout) view.findViewById(R.id.pop_view_content_view);
-
-        // event listeners
-        mContentView.setOnClickListener(this);
-        mButtonFavorite.setOnClickListener(this);
+        mRecitePreference = new ReciteModulePreference(mContext);
     }
 
-    public void setViewDismissHandler(ViewDismissHandler viewDismissHandler) {
-        mViewDismissHandler = viewDismissHandler;
+    public void showErrorInfo(String error, TipView.ITipViewListener mListener) {
+        TipView tipView = new TipView(mContext);
+        tipView.setListener(mListener);
+        mWindowManager.addView(tipView, getPopViewParams());
+        tipView.startWithAnim();
+        tipView.error(error);
+        closeTipViewCountdown(tipView, mListener);
     }
 
-    public void setResultContent(Result result) {
-        setQuery(result.getQuery());
-        mButtonFavorite.setTag(result);
-        List<String> temp = result.getExplains();
-        if (temp.isEmpty()) {
-            temp = result.getTranslation();
-        }
-        Observable.from(temp)
-                .subscribe(new Action1<String>() {
-                    @Override
-                    public void call(String s) {
-                        addExplain(s);
-                    }
-                });
-    }
-
-    private void addExplain(String explains) {
-        mLlDst.addView(ViewUtil.getWordsView(mContext, explains, android.R.color.white));
-    }
-
-    private void resetViewContent() {
-        mLlDst.removeAllViews();
-    }
-
-    private void setQuery(String title) {
-        mTvSrc.setText(title);
-    }
-
-    public void show(boolean isShowFavoriteButton) {
-        removeHeadsUpView();
-        //向 WindowManager 添加浮动窗
-        mWindowManager.addView(mHeadsUpView, getPopViewParams());
-        mButtonFavorite.setVisibility(isShowFavoriteButton ? View.VISIBLE : View.GONE);
-        //设置显示动画
-        ObjectAnimator translationAnim = ObjectAnimator.ofFloat(mContentView, "translationY", -700, 0);
-        translationAnim.setDuration(DURATION_TIME);
-        translationAnim.start();
-
-        int duration = SpUtils.getDurationTimeWay(GDApplication.mContext).getDurationTime();
-        Logger.i("tip 显示时长为 " + duration);
-        Observable.timer(duration, TimeUnit.SECONDS, AndroidSchedulers.mainThread())
+    private void closeTipViewCountdown(final TipView tipView, TipView.ITipViewListener mListener) {
+        int duration = mRecitePreference.getDurationTimeWay().getDurationTime();
+        Logger.t("recite").d(duration + "秒消失");
+        mHideTipTask = Observable.timer(duration, TimeUnit.SECONDS, AndroidSchedulers.mainThread())
                 .map(new Func1<Long, Object>() {
                     @Override
                     public Object call(Long aLong) {
-                        removePoppedViewAndClear();
+                        tipView.closeWithAnim(new TipView.OnAnimListener() {
+                            @Override
+                            public void onCloseAnimEnd(Animator animation) {
+                                removeTipViewInner(tipView);
+                                mListener.onRemove();
+                            }
+                        });
                         return null;
                     }
-                })
-                .subscribe();
-    }
-
-    private void removePoppedViewAndClear() {
-        ObjectAnimator translationAnim = ObjectAnimator.ofFloat(mContentView, "translationY", 0, -700);
-        translationAnim.start();
-        translationAnim.addListener(new AnimatorListenerAdapter() {
+                });
+        mHideTipTask.subscribe(new Action1() {
             @Override
-            public void onAnimationEnd(Animator animation) {
-                super.onAnimationEnd(animation);
-                removeHeadsUpView();
-                if (mViewDismissHandler != null) {
-                    mViewDismissHandler.onViewDismiss();
-                }
-                resetViewContent();
+            public void call(Object o) {
+
+            }
+        }, new Action1<Throwable>() {
+            @Override
+            public void call(Throwable throwable) {
+
             }
         });
     }
 
-    private void removeHeadsUpView() {
-        if (mWindowManager != null && mHeadsUpView.isAttachedToWindow()) {
-            mWindowManager.removeView(mHeadsUpView);
+    protected class ReciteException extends Exception{
+
+    }
+
+    private void removeTipViewInner(TipView tipView) {
+        if (tipView.getParent() != null) {
+            mWindowManager.removeView(tipView);
         }
     }
 
-    /**
-     * TODO 添加滑动手势 比如系统通知，可以左滑或者优化 移除悬浮窗 如果有人做 欢迎 PR ~
-     * touch the outside of the content view, remove the popped view
-     */
-    @Override
-    public boolean onTouch(View v, MotionEvent event) {
-//        int x = (int) event.getX();
-//        int y = (int) event.getY();
-//        Rect rect = new Rect();
-//        mContentView.getGlobalVisibleRect(rect);
-//        if (!rect.contains(x, y)) {
-//            removePoppedViewAndClear();
-//        }
-        return false;
+    public void show(Result result, boolean isShowFavoriteButton, boolean isShowDoneMark, TipView.ITipViewListener mListener) {
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(mContext);
+        boolean isSettingUseSystemNotification = sharedPreferences.getBoolean("preference_show_float_view_use_system", false);
+        if (Utils.isSDKHigh5() && isSettingUseSystemNotification) {
+            StringBuilder sb = new StringBuilder();
+            for (String string : result.getExplains()) {
+                sb.append(string).append("\n");
+            }
+
+            NotificationCompat.Builder mBuilder =
+                    new NotificationCompat.Builder(mContext)
+                            .setSmallIcon(R.drawable.icon_notification)
+                            .setContentTitle(result.getQuery())
+                            .setDefaults(Notification.DEFAULT_LIGHTS | Notification.DEFAULT_SOUND)
+                            .setVibrate(new long[]{0l})
+                            .setPriority(Notification.PRIORITY_HIGH)
+                            .setContentText(sb.toString());
+
+             /* Add Big View Specific Configuration */
+            NotificationCompat.InboxStyle inboxStyle = new NotificationCompat.InboxStyle();
+
+            // Moves events into the big view
+            for (String string : result.getExplains()) {
+                inboxStyle.addLine(string);
+            }
+
+            mBuilder.setStyle(inboxStyle);
+
+            Intent resultIntent = new Intent(mContext, MainActivity.class);
+            resultIntent.putExtra("data", result);
+
+            PendingIntent resultPendingIntent = PendingIntent.getActivity(
+                    mContext,
+                    KEY_REQUEST_CODE_FOR_NOTI,
+                    resultIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT
+            );
+
+            mBuilder.addAction(R.drawable.ic_favorite_border_grey_24dp, "收藏", resultPendingIntent);
+            NotificationManager mNotificationManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
+            Notification note = mBuilder.build();
+            mNotificationManager.notify(result.getQuery().hashCode(), note);
+
+        } else {
+            TipView tipView = new TipView(mContext);
+            mMapTipView.put(result, tipView);
+            tipView.setListener(mListener);
+            mWindowManager.addView(tipView, getPopViewParams());
+            tipView.startWithAnim();
+            tipView.setContent(result, isShowFavoriteButton, isShowDoneMark);
+            closeTipViewCountdown(tipView, mListener);
+        }
     }
 
-    public interface ViewDismissHandler {
-        void onViewDismiss();
+    public void setWithFavorite(Result result) {
+        TipView tipView = mMapTipView.get(result);
+        if (tipView != null) {
+            tipView.setFavoriteBackground(R.drawable.ic_favorite_pink_24dp);
+        }
     }
+
+    public void setWithNotFavorite(Result result) {
+        TipView tipView = mMapTipView.get(result);
+        if (tipView != null) {
+            tipView.setFavoriteBackground(R.drawable.ic_favorite_border_white_24dp);
+        }
+    }
+
 
     private WindowManager.LayoutParams getPopViewParams() {
         int w = WindowManager.LayoutParams.MATCH_PARENT;
@@ -189,7 +195,11 @@ public class TipViewController implements View.OnClickListener, View.OnTouchList
 
         int flags = 0;
         int type;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+        if (Build.VERSION.SDK_INT >=Build.VERSION_CODES.O){
+            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+        }else if (Build.VERSION.SDK_INT >=Build.VERSION_CODES.N_MR1){
+            type = WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+        }else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             type = WindowManager.LayoutParams.TYPE_TOAST;
         } else {
             type = WindowManager.LayoutParams.TYPE_PHONE;
@@ -206,37 +216,16 @@ public class TipViewController implements View.OnClickListener, View.OnTouchList
         return layoutParams;
     }
 
-
-    @Override
-    public void onClick(View v) {
-        switch (v.getId()) {
-            case R.id.bt_action:
-                Result entity = (Result) v.getTag();
-                QueryBuilder queryBuilder = new QueryBuilder(Result.class);
-                queryBuilder = queryBuilder.whereEquals("query ", entity.getQuery());
-                if (GDApplication.getAppComponent().getLiteOrm().query(queryBuilder).isEmpty()) {
-                    long res = GDApplication.getAppComponent().getLiteOrm().insert(entity);
-                    showToast(res > 0 ? "收藏成功" : "收藏失败");
-                } else {
-                    showToast("'" + entity.getQuery() + "' 已存在于单词本！");
-                }
-                removePoppedViewAndClear();
-                break;
-            default:
-                removePoppedViewAndClear();
+    public void removeTipView(Result result) {
+        if (result == null) return;
+        TipView tipView = mMapTipView.get(result);
+        if (tipView != null) {
+            Logger.i("移除 tipView ");
+            removeTipViewInner(tipView);
         }
-
-    }
-
-    private void showToast(String msg) {
-        Observable.just(msg)
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(new Action1<String>() {
-                    @Override
-                    public void call(String s) {
-                        Logger.i("show toast");
-                        Toast.makeText(mContext, s, Toast.LENGTH_SHORT).show();
-                    }
-                });
+        if (mHideTipTask != null) {
+            Logger.i("移除 tipView 对应的 倒计时");
+            mHideTipTask.unsubscribeOn(AndroidSchedulers.mainThread());
+        }
     }
 }

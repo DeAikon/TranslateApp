@@ -20,43 +20,65 @@
 
 package name.gudong.translate.mvp.presenters;
 
-import android.app.Activity;
+import android.content.ClipData;
+import android.content.Context;
+import android.support.v7.app.AlertDialog;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.litesuits.orm.LiteOrm;
+import com.litesuits.orm.db.assit.QueryBuilder;
 import com.orhanobut.logger.Logger;
+import com.umeng.analytics.MobclickAgent;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import javax.inject.Inject;
 
+import jonathanfinerty.once.Once;
+import name.gudong.translate.listener.clipboard.ClipboardManagerCompat;
+import name.gudong.translate.mvp.model.SingleRequestService;
 import name.gudong.translate.mvp.model.WarpAipService;
-import name.gudong.translate.mvp.model.entity.Result;
+import name.gudong.translate.mvp.model.entity.translate.HistoryResult;
+import name.gudong.translate.mvp.model.entity.translate.Result;
 import name.gudong.translate.mvp.views.IBookView;
+import name.gudong.translate.ui.NavigationManager;
+import name.gudong.translate.util.SpUtils;
 import rx.Observable;
-import rx.Subscriber;
 import rx.android.schedulers.AndroidSchedulers;
 import rx.functions.Action1;
 import rx.schedulers.Schedulers;
+
 
 /**
  * Created by GuDong on 2/28/16 17:02.
  * Contact with gudong.name@gmail.com.
  */
 public class BookPresenter extends BasePresenter<IBookView> {
+    private static final String KEY_TIP_OF_RECITE_OPEN = "TIP_OF_RECITE_OPEN";
+    private static final String KEY_RECITE_MODE_SWITCH = "RECITE_MODE_SWITCH";
+    private static final String TAG = "BOOK_PRESENTER";
     @Inject
-    public BookPresenter(LiteOrm liteOrm, WarpAipService apiService, Activity activity) {
-        super(liteOrm, apiService, activity);
+    public BookPresenter(LiteOrm liteOrm, WarpAipService apiService, SingleRequestService singleRequestService, Context context) {
+        super(liteOrm, apiService, singleRequestService,context);
     }
 
     public void getWords() {
-        getAllWordsWarpByObservable()
+        getWords(false);
+    }
+    public void getWords(boolean isHistList) {
+        getAllWordsWarpByObservable(isHistList)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(new Action1<List<Result>>() {
                     @Override
                     public void call(List<Result> transResultEntities) {
-                        mView.fillData(transResultEntities);
+                        boolean isReciteMode = SpUtils.isWordBookReciteMode(getContext());
+                        mView.fillData(transResultEntities, isReciteMode);
                     }
                 });
     }
@@ -76,8 +98,12 @@ public class BookPresenter extends BasePresenter<IBookView> {
                 });
     }
 
-    private Observable<List<Result>> getAllWordsWarpByObservable() {
-        return makeObservable(getAllWordsReal());
+    private Observable<List<Result>> getAllWordsWarpByObservable(boolean isHistList) {
+        if(isHistList){
+            return makeObservable(getHistWordsReal());
+        }else{
+            return makeObservable(getAllWordsReal());
+        }
     }
 
     private Observable<Integer> deleteWordsByObservable(Result entity) {
@@ -89,28 +115,109 @@ public class BookPresenter extends BasePresenter<IBookView> {
         return new Callable<List<Result>>() {
             @Override
             public List<Result> call() throws Exception {
-                List<Result> results = mLiteOrm.query(Result.class);
+                QueryBuilder<Result> qb = new QueryBuilder<>(Result.class)
+                        .appendOrderDescBy(Result.COL_ID);
+
+                List<Result> results = mLiteOrm.query(qb);
                 Logger.i(" results.size() "+results.size());
                 return results;
             }
         };
     }
 
-    private Callable<Integer> deleteWordReal(Result entity) {
-        return () -> mLiteOrm.delete(entity);
-    }
-
-    private <T> Observable<T> makeObservable(final Callable<T> func) {
-        return Observable.create(new Observable.OnSubscribe<T>() {
+    private Callable<List<Result>> getHistWordsReal() {
+        return new Callable<List<Result>>() {
             @Override
-            public void call(Subscriber<? super T> subscriber) {
-                try {
-                    subscriber.onNext(func.call());
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+            public List<Result> call() throws Exception {
+                QueryBuilder<HistoryResult> qb = new QueryBuilder<>(HistoryResult.class)
+                        .appendOrderDescBy(Result.COL_ID);
+
+                List<HistoryResult> results = mLiteOrm.query(qb);
+                List<Result> resultsWrapList = new ArrayList<>();
+                resultsWrapList.addAll(results);
+                Logger.i(" results.size() "+results.size());
+                return resultsWrapList;
             }
-        });
+        };
     }
 
+    private Callable<Integer> deleteWordReal(Result entity) {
+        if(entity instanceof HistoryResult){
+            HistoryResult result = (HistoryResult) entity;
+            return () -> mLiteOrm.delete(result);
+        }else {
+            return () -> mLiteOrm.delete(entity);
+        }
+    }
+
+
+    public String getWordsJsonString(List<Result>results){
+        Gson gson = new Gson();
+        return gson.toJson(results);
+    }
+
+    public void copyText(String text){
+        ClipData myClip = ClipData.newPlainText("text", text);
+        ClipboardManagerCompat.create(getContext()).setPrimaryClip(myClip);
+    }
+
+    public void restoreWordsByText(List<Result> oriList, String text) {
+        Gson gson = new Gson();
+        List<Result>results = gson.fromJson(text, new TypeToken<List<Result>>(){}.getType());
+        int hasExistCount = 0;
+        for(Result result:results){
+            if(oriList.contains(result)){
+                Logger.t(TAG).i(result.getQuery()+" has exist ");
+                hasExistCount ++;
+                continue;
+            }
+            mLiteOrm.insert(result);
+            Logger.t(TAG).i(result.getQuery()+" restore success ");
+        }
+        Logger.t(TAG).i("restore finish! total restore count is "+ (results.size()-hasExistCount));
+        if(results.size() == hasExistCount){
+            mView.showTipDataHaveNoChange();
+        }else{
+            mView.restoreSuccess(results.size()-hasExistCount);
+        }
+    }
+
+    public void checkPointRecite(int wordsSize) {
+        //当单词数大于 5 个时才提示
+        if (!Once.beenDone(KEY_TIP_OF_RECITE_OPEN) && wordsSize>=5) {
+            Once.markDone(KEY_TIP_OF_RECITE_OPEN);
+            new AlertDialog.Builder(getContext())
+                    .setTitle("提示")
+                    .setMessage("检测到你的单词本中已经有不少单词了，建议你前往设置页面，开启定时单词提示，用于帮助你背单词。")
+                    .setPositiveButton("去开启", ((dialog, which) -> {
+                        NavigationManager.gotoSetting(getContext());
+                    }))
+                    .setNegativeButton("没兴趣",null)
+                    .show();
+        }
+    }
+
+    public void initStatus(boolean isHistList) {
+        if(isHistList){
+           return;
+        }
+        Once.toDo(KEY_RECITE_MODE_SWITCH);
+        // 第一次点击单词本开关需要给用户一个功能提示框
+        Once.toDo(KEY_TIP_OF_RECITE_OPEN);
+    }
+
+    public boolean hasShowReciteModeIntroduce() {
+        return Once.beenDone(KEY_RECITE_MODE_SWITCH);
+    }
+
+    public void makeReciteDone(){
+        Once.markDone(KEY_RECITE_MODE_SWITCH);
+    }
+
+    public void clearHist() {
+        int res = mLiteOrm.deleteAll(HistoryResult.class);
+        if(res>0){
+            mView.showEmptyList();
+        }
+    }
 }

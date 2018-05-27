@@ -25,8 +25,6 @@ import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 
 import name.gudong.translate.GDApplication;
-import name.gudong.translate.mvp.model.type.EDurationTipTime;
-import name.gudong.translate.mvp.model.type.EIntervalTipTime;
 import name.gudong.translate.mvp.model.type.ETranslateFrom;
 
 /**
@@ -46,15 +44,34 @@ public class SpUtils {
     }
 
     private static final String KEY_TRANSLATE_FROM = "TRANSLATE_FROM";
+    private static final String KEY_WORDBOOK_RECITE_MODE = "WORDBOOK_RECITE_MODE";
     //every tip's interval time
     public static final String KEY_INTERVAL_TIP_TIME = "INTERVAL_TIP_TIME";
-    //duration of tip
-    private static final String KEY_DURATION_TIP_TIME = "DURATION_TIP_TIME";
 
-    private static final String KEY_RECITE_OPEN = "RECITE_OPEN_OR_NOT";
 
     //is open JIT translate or not
-    private static final String KEY_OPEN_JIT = "RECITE_OPEN_JIT";
+    private static final String KEY_OPEN_JIT = "preference_recite_open_jit";
+
+    //is open JIT translate or not
+    private static final String KEY_PREFERENCE_SHOW_ICON_IN_NOTIFICATION = "preference_show_icon_in_notification";
+
+    //is notify dayline
+    private static final String KEY_PREFERENCE_NOTIFY_DAYLINE = "preference_notify_dayline";
+
+    //is notify dayline
+    private static final String KEY_PREFERENCE_AUTO_PASTE = "preference_auto_paste_words";
+
+    private static final String KEY_PREFERENCE_AUTO_COMPLETE_INPUT = "preference_open_auto_complete_input";
+
+    //App 是否在前台
+    private static final String KEY_FLAG_APP_FRONT = "FLAG_LISTENER_CLIPBOARD";
+
+    //是否授予 Android M 浮窗权限
+    private static final String KEY_DRAW_OVERLAYS_PERMISSION = "DRAW_OVERLAYS_PERMISSION";
+
+    //是否已经显示过用户引导
+    private static final String KEY_HAS_SHOW_GUIDE = "HAS_SHOW_GUIDE";
+
 
     public static void setTranslateEngine(Context context, String version) {
         putStringPreference(context, KEY_TRANSLATE_FROM, version);
@@ -68,52 +85,64 @@ public class SpUtils {
         return ETranslateFrom.valueOf(getTranslateEngine(context));
     }
 
-    //////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    public static void setIntervalTipTime(Context context, String duration) {
-        putStringPreference(context, KEY_INTERVAL_TIP_TIME,duration);
-    }
-
-    public static String getIntervalTipTime(Context context) {
-        return getStringPreference(context, KEY_INTERVAL_TIP_TIME, EIntervalTipTime.FIVE_MINUTE.name());
-    }
-
-    public static EIntervalTipTime getIntervalTimeWay(Context context) {
-        String name = getIntervalTipTime(context);
-        return EIntervalTipTime.valueOf(name);
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    public static void setDurationTipTime(Context context, String duration) {
-        putStringPreference(context, KEY_DURATION_TIP_TIME,duration);
-    }
-
-    public static String getDurationTipTime(Context context) {
-        return getStringPreference(context, KEY_DURATION_TIP_TIME, EDurationTipTime.FOUR_SECOND.name());
-    }
-
-    public static EDurationTipTime getDurationTimeWay(Context context) {
-        return EDurationTipTime.valueOf(getDurationTipTime(context));
-    }
-
-    //是否开启背单词
-    public static void setReciteOpenOrNot(Context context,boolean isOpen){
-        putBooleanPreference(context,KEY_RECITE_OPEN,isOpen);
-    }
-
-    public static boolean getReciteOpenOrNot(Context context){
-        return getBooleanPreference(context,KEY_RECITE_OPEN,false);
-    }
-
     //是否开启划词翻译
     public static void setOpenJITOrNot(Context context,boolean isOpen){
         putBooleanPreference(context,KEY_OPEN_JIT,isOpen);
     }
 
+    public static boolean isShowIconInNotification(Context context){
+        return getBooleanPreference(context,KEY_PREFERENCE_SHOW_ICON_IN_NOTIFICATION,false);
+    }
+
+    public static boolean isNotifyDayline(Context context){
+        return getBooleanPreference(context,KEY_PREFERENCE_NOTIFY_DAYLINE,false);
+    }
+
+    public static boolean isAutoPasteWords(Context context){
+        return getBooleanPreference(context,KEY_PREFERENCE_AUTO_PASTE,false);
+    }
+    public static boolean isAutoCompleteInputWords(Context context){
+        return getBooleanPreference(context,KEY_PREFERENCE_AUTO_COMPLETE_INPUT,false);
+    }
+
     public static boolean getOpenJITOrNot(Context context){
         return getBooleanPreference(context,KEY_OPEN_JIT,true);
     }
+
+    //最前台是不是本应用 这个标志用来做判断 在当前应用的主界面长按是不做响应的
+    public static void setAppFront(Context context,boolean isOpen){
+        putBooleanPreference(context, KEY_FLAG_APP_FRONT,isOpen);
+    }
+
+    public static boolean getAppFront(Context context){
+        return getBooleanPreference(context, KEY_FLAG_APP_FRONT,false);
+    }
+
+    //设置是否匹配权限
+    public static void setDrawOverlays(Context context,boolean isOpen){
+        putBooleanPreference(context, KEY_DRAW_OVERLAYS_PERMISSION,isOpen);
+    }
+
+    public static boolean hasGrantDrawOverlays(Context context){
+        return getBooleanPreference(context, KEY_DRAW_OVERLAYS_PERMISSION,false);
+    }
+
+    public static boolean hasShowGuide(Context context){
+        return getBooleanPreference(context, KEY_HAS_SHOW_GUIDE,false);
+    }
+
+    public static void setHasShowGuideFlag(Context context,boolean isShow){
+        putBooleanPreference(context,KEY_HAS_SHOW_GUIDE,isShow);
+    }
+
+    public static void setWordBookReciteMode(Context context,boolean isReciteMode){
+        putBooleanPreference(context,KEY_WORDBOOK_RECITE_MODE,isReciteMode);
+    }
+
+    public static boolean isWordBookReciteMode(Context context){
+        return getBooleanPreference(context,KEY_WORDBOOK_RECITE_MODE,false);
+    }
+
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
 

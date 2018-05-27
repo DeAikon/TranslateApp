@@ -20,11 +20,10 @@
 
 package name.gudong.translate.mvp.views;
 
-import android.view.Menu;
+import java.util.List;
 
-import name.gudong.translate.mvp.model.entity.AbsResult;
-import name.gudong.translate.mvp.model.type.EDurationTipTime;
-import name.gudong.translate.mvp.model.type.EIntervalTipTime;
+import name.gudong.translate.mvp.model.entity.dayline.IDayLine;
+import name.gudong.translate.mvp.model.entity.translate.Result;
 import name.gudong.translate.mvp.model.type.ETranslateFrom;
 
 /**
@@ -37,34 +36,32 @@ public interface IMainView extends IBaseView {
 
     void onPrepareTranslate();
 
-    /**
-     * 清空翻译结果对应容器中所有的view
-     */
-    void onClearResultViews();
-
-    void appendBottomView(AbsResult result);
-
     void onError(Throwable e);
 
     void addExplainItem(String explain);
 
-    void initTranslateEngineSetting(Menu menu, ETranslateFrom way);
+    void initTranslateEngineSetting(ETranslateFrom way);
 
-    void initDurationTimeSetting(Menu menu, EDurationTipTime way);
-
-    void initIntervalTimeSetting(Menu menu,EIntervalTipTime way);
+    void onTranslateComplete();
 
     /**
-     * 初始化是否背单词的设置
-     * @param menu
-     * @param isOpen
+     * 关闭软键盘
      */
-    void initReciteSetting(Menu menu, boolean isOpen);
+    void closeKeyboard();
 
-    /**
-     * 初始化是否开启划词翻译
-     * @param menu
-     * @param isOpen
-     */
-    void initJITSetting(Menu menu, boolean isOpen);
+    void showPlaySound();
+
+    void hidePlaySound();
+
+    void addTagForView(Result result);
+
+    void initWithFavorite();
+
+    void initWithNotFavorite();
+
+    void fillDayline(IDayLine entity);
+
+    void attachLocalDic(List<String> dic);
+
+    void playNewYearAnim();
 }

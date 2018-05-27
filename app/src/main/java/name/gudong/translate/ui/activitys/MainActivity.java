@@ -20,52 +20,105 @@
 
 package name.gudong.translate.ui.activitys;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.support.design.widget.BottomSheetBehavior;
+import android.support.design.widget.CoordinatorLayout;
 import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.AppCompatEditText;
+import android.support.v7.widget.AppCompatImageView;
+import android.support.v7.widget.AppCompatSpinner;
+import android.text.Editable;
 import android.text.TextUtils;
-import android.view.LayoutInflater;
+import android.text.TextWatcher;
+import android.util.Log;
+import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
+import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import butterknife.Bind;
+import com.airbnb.lottie.LottieAnimationView;
+import com.google.gson.JsonSyntaxException;
+import com.umeng.analytics.MobclickAgent;
+
+import java.net.UnknownHostException;
+import java.util.List;
+
+import butterknife.BindView;
 import butterknife.ButterKnife;
-import jonathanfinerty.once.Once;
-import me.gudong.translate.R;
-import name.gudong.translate.mvp.model.entity.AbsResult;
-import name.gudong.translate.mvp.model.type.EDurationTipTime;
-import name.gudong.translate.mvp.model.type.EIntervalTipTime;
+import butterknife.OnClick;
+import name.gudong.translate.BuildConfig;
+import name.gudong.translate.R;
+import name.gudong.translate.injection.components.AppComponent;
+import name.gudong.translate.injection.components.DaggerActivityComponent;
+import name.gudong.translate.injection.modules.ActivityModule;
+import name.gudong.translate.mvp.model.entity.dayline.IDayLine;
+import name.gudong.translate.mvp.model.entity.translate.JinShanResult;
+import name.gudong.translate.mvp.model.entity.translate.Result;
 import name.gudong.translate.mvp.model.type.ETranslateFrom;
+import name.gudong.translate.mvp.presenters.BasePresenter;
 import name.gudong.translate.mvp.presenters.MainPresenter;
 import name.gudong.translate.mvp.views.IMainView;
-import name.gudong.translate.reject.components.AppComponent;
-import name.gudong.translate.reject.components.DaggerActivityComponent;
-import name.gudong.translate.reject.modules.ActivityModule;
+import name.gudong.translate.ui.NavigationManager;
+import name.gudong.translate.util.AnswerUtil;
 import name.gudong.translate.util.DialogUtil;
 import name.gudong.translate.util.InputMethodUtils;
 import name.gudong.translate.util.SpUtils;
+import name.gudong.translate.util.Utils;
 import name.gudong.translate.util.ViewUtil;
 
 public class MainActivity extends BaseActivity<MainPresenter> implements IMainView {
-
-    private static final String KEY_TIP_OF_RECITE = "TIP_OF_RECITE";
-
-    @Bind(android.R.id.input)
-    AppCompatEditText mInput;
-    @Bind(R.id.list_result)
+    private static final String TAG = "MainActivity";
+    @BindView(android.R.id.input)
+    AutoCompleteTextView mInput;
+    @BindView(R.id.list_result)
     LinearLayout mList;
-    @Bind(R.id.tv)
-    TextView mTv;
+    @BindView(R.id.sp_translate_way)
+    AppCompatSpinner mSpTranslateWay;
 
-    TextView mTvResultEngineInfo;
+    @BindView(R.id.iv_favorite)
     ImageView mIvFavorite;
+    @BindView(R.id.iv_sound)
+    ImageView mIvSound;
+    @BindView(R.id.iv_paste)
+    ImageView mIvPaste;
+    @BindView(R.id.tv_clear)
+    TextView mTvClear;
+    @BindView(R.id.rl_action)
+    RelativeLayout mRlAction;
+    @BindView(R.id.bt_translate)
+    Button mBtTranslate;
+
+    @BindView(R.id.tv_dayline)
+    TextView mTvDayline;
+    @BindView(R.id.tv_dayline_note)
+    TextView mTvDaylineNote;
+    @BindView(R.id.iv_sound_dayline)
+    AppCompatImageView mIvSoundDayline;
+    @BindView(R.id.main_content)
+    CoordinatorLayout coordinatorLayout;
+
 
     Menu mMenu;
+
+    private boolean isFavorite;
+
+    private BottomSheetBehavior mBottomSheetBehavior;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,27 +127,133 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
         ButterKnife.bind(this);
         addListener();
         startListenService();
-        checkSomething();
+        initSpinner();
+        checkTranslateWay();
         checkVersion();
+        setUpDayline(false);
+        checkIntent();
+        boolean needShowGuidePermissionDialog = checkOverPermission();
+        if(needShowGuidePermissionDialog){
+            showGuidePermissionDialog();
+        }else{
+            guideCheck();
+        }
+    }
+
+    private void guideCheck() {
+        if (!SpUtils.hasShowGuide(this)) {
+            showFloatTranslateExplainDialog();
+        }
+    }
+
+    private void setUpDayline(boolean isOpenDayLine) {
+        View bottomSheet = coordinatorLayout.findViewById(R.id.bottom_sheet_view);
+        if (!isOpenDayLine) {
+            bottomSheet.setVisibility(View.GONE);
+            return;
+        }
+        //点击 和拖拽都可以打开bottom sheet
+        bottomSheet.setOnClickListener(v -> onClickBottomSheet());
+        mBottomSheetBehavior = BottomSheetBehavior.from(bottomSheet);
+        mBottomSheetBehavior.setPeekHeight(getResources().getDimensionPixelOffset(R.dimen.bottom_bar_height));
+
+        mPresenter.dayline();
+    }
+
+
+    private void checkIntent() {
+        mPresenter.checkIntentFromClickTipView(getIntent());
+        //每日一句
+        if (getIntent().getBooleanExtra("from_dayline_remind", false)) {
+            onClickBottomSheet();
+            MobclickAgent.onEvent(getApplicationContext(), "enter_mainactivity_by_click_notification_dayline");
+            mIvSoundDayline.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    onClickDaylineSound(findViewById(R.id.iv_sound_dayline));
+                }
+            }, 1000);
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        //检查粘贴板和 intent
+        checkClipboard();
         initConfig();
+        addTranslateWaySelectListener();
+        if (BuildConfig.DEBUG) {
+            SpUtils.setAppFront(this, false);
+        } else {
+            SpUtils.setAppFront(this, true);
+        }
+    }
+
+    private boolean checkOverPermission() {
+        if (Utils.isAndroidM()) {
+            if (!SpUtils.hasGrantDrawOverlays(this) && !Settings.canDrawOverlays(this)) {
+                return true;
+            } else {
+                SpUtils.setDrawOverlays(this, true);
+                return false;
+            }
+        } else {
+            SpUtils.setDrawOverlays(this, true);
+            return false;
+        }
+    }
+
+    /**
+     * 弹出引导用户打开悬浮权限的 dialog
+     */
+    private void showGuidePermissionDialog() {
+        new AlertDialog.Builder(this).setMessage("检测到你的设备默禁用了浮窗权限，为了保证你可以正常使用咕咚翻译的划词翻译功能，需要你授予浮窗权限。")
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        guideCheck();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void showFloatTranslateExplainDialog(){
+        DialogUtil.showGuideFloatTranslate(this);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        SpUtils.setAppFront(this, false);
+    }
+
+    private void checkTranslateWay() {
+        mPresenter.prepareTranslateWay();
     }
 
     private void initConfig() {
-        // 第一次点击单词本开关需要给用户一个功能提示框
-        Once.toDo(KEY_TIP_OF_RECITE);
+        if(SpUtils.isAutoCompleteInputWords(this)){
+            mPresenter.analysisLocalDic();
+        }
     }
 
     private void checkVersion() {
+        //if (BuildConfig.DEBUG) return;
         mPresenter.checkVersionAndShowChangeLog();
+
     }
 
-    private void startListenService() {
-        mPresenter.startListenClipboardService();
-    }
-
-    private void checkSomething(){
-        //检查粘贴板有没有英文单词 如果有就查询一次 并且显示给用户
-        mPresenter.checkClipboard();
+    private void checkClipboard() {
+        if (!mPresenter.hasExtraResult(getIntent()) && SpUtils.isAutoPasteWords(this)) {
+            //检查粘贴板有没有英文单词 如果有就查询一次 并且显示给用户
+            mPresenter.checkClipboard();
+        }
     }
 
     @Override
@@ -115,100 +274,59 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
         super.onPrepareOptionsMenu(menu);
-        mPresenter.prepareOptionSettings(menu);
         mMenu = menu;
+        menu.findItem(R.id.menu_about).setTitle(formatAboutVersion());
         return true;
+    }
+
+    private String formatAboutVersion() {
+        String about = getString(R.string.menu_about);
+        return about.concat("(" + Utils.getVersionName(this) + ")");
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
+            case R.id.menu_opinion:
+                NavigationManager.gotoSendEmail(this);
+                MobclickAgent.onEvent(this, "menu_opinion");
+                break;
             case R.id.menu_book:
                 WordsBookActivity.gotoWordsBook(this);
+                MobclickAgent.onEvent(this, "open_book");
+                break;
+            case R.id.menu_hist:
+                WordsBookActivity.gotoWordsHist(this);
+                MobclickAgent.onEvent(this, "open_history");
                 break;
             case R.id.menu_about:
-                DialogUtil.showAbout(this);
-                InputMethodUtils.closeSoftKeyboard(this);
+//                DialogUtil.showAbout(this, formatAboutVersion());
+                NavigationManager.gotoAboutActivity(this);
+                MobclickAgent.onEvent(this, "menu_about");
+                AnswerUtil.actionShowAbout();
+                closeKeyboard();
+                break;
+            case R.id.menu_setting:
+                MobclickAgent.onEvent(this, "menu_setting");
+                closeKeyboard();
+                NavigationManager.gotoSetting(this);
                 break;
             case R.id.menu_score:
                 mPresenter.gotoMarket();
+                MobclickAgent.onEvent(this, "menu_score");
                 break;
-            case R.id.translate_baidu:
-                selectEngine(item, ETranslateFrom.BAI_DU);
-                break;
-            case R.id.translate_jinshan:
-                selectEngine(item, ETranslateFrom.JIN_SHAN);
-                break;
-            case R.id.translate_youdao:
-                selectEngine(item,ETranslateFrom.YOU_DAO);
-                break;
-
-            case R.id.menu_open_jit_or_nor:
-                boolean isOpenJit = item.isChecked();
-                SpUtils.setOpenJITOrNot(this,!isOpenJit);
-                break;
-
-            case R.id.menu_use_recite_or_not:
-                if (Once.needToDo(KEY_TIP_OF_RECITE)) {
-                    new AlertDialog.Builder(this)
-                            .setTitle("提示")
-                            .setMessage("定时提示生词，是咕咚翻译做的一个帮助用户记住生词的功能。\n\n开启定时单词提醒后，系统会每隔五分钟(时间可以设置)，随机弹出一个提示框，用于随机展示你收藏的生词，帮助你记住这些陌生单词。\n\n我相信再陌生的单词，如果可以不停的在你眼前出现，不一定那一次就记住了，当然这个功能是可以关闭的。\n\n灵感源于贝壳单词，感谢 @drakeet 同学的作品。")
-                            .setPositiveButton("知道了", ((dialog, which) ->  Once.markDone(KEY_TIP_OF_RECITE)))
-                            .show();
-                }
-                boolean isCheck = item.isChecked();
-                SpUtils.setReciteOpenOrNot(this,!isCheck);
-                mMenu.findItem(R.id.menu_interval_tip_time).setVisible(!isCheck);
-                startListenService();
-                break;
-
-            case R.id.interval_one_minute:
-                selectIntervalTime(item, EIntervalTipTime.ONE_MINUTE.name());
-                break;
-            case R.id.interval_three_minute:
-                selectIntervalTime(item, EIntervalTipTime.THREE_MINUTE.name());
-                break;
-            case R.id.interval_five_minute:
-                selectIntervalTime(item, EIntervalTipTime.FIVE_MINUTE.name());
-                break;
-            case R.id.interval_ten_minute:
-                selectIntervalTime(item, EIntervalTipTime.TEN_MINUTE.name());
-                break;
-            case R.id.interval_thirty_minute:
-                selectIntervalTime(item, EIntervalTipTime.THIRTY_MINUTE.name());
-                break;
-
-            case R.id.duration_one_second:
-                selectDurationTime(item, EDurationTipTime.ONE_SECOND.name());
-                break;
-            case R.id.duration_four_second:
-                selectDurationTime(item, EDurationTipTime.FOUR_SECOND.name());
-                break;
-            case R.id.duration_six_second:
-                selectDurationTime(item, EDurationTipTime.SIX_SECOND.name());
-                break;
-            case R.id.duration_ten_second:
-                selectDurationTime(item, EDurationTipTime.TEN_SECOND.name());
+            case R.id.menu_support:
+                DialogUtil.showSupport(this);
+                MobclickAgent.onEvent(this, "menu_support");
+                AnswerUtil.actionSupport();
                 break;
         }
         return super.onOptionsItemSelected(item);
     }
 
-    private void selectDurationTime(MenuItem item, String name) {
-        SpUtils.setDurationTipTime(this, name);
-        item.setChecked(true);
-    }
 
-    private void selectIntervalTime(MenuItem item, String name) {
-        SpUtils.setIntervalTipTime(this, name);
-        item.setChecked(true);
-        startListenService();
-    }
-
-    private void selectEngine(MenuItem item, ETranslateFrom way) {
+    private void selectEngine(ETranslateFrom way) {
         SpUtils.setTranslateEngine(this, way.name());
-        item.setChecked(true);
-        shiftEnginePoint(way);
         checkInputAndResearch();
     }
 
@@ -216,182 +334,406 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
      * 检查输入框是不是已经有输入的内容 如果有自动搜索，
      * 主要是切换搜索引擎时会用到
      */
-    private void checkInputAndResearch(){
-        String inputString = mInput.getText().toString();
-        if(!inputString.isEmpty()){
-            mPresenter.executeSearch(inputString);
-        }
-    }
+    private void checkInputAndResearch() {
 
-    private void shiftEnginePoint(ETranslateFrom eTranslateFrom) {
-        String msg = "已切换至 " + eTranslateFrom.getName() + " 翻译引擎";
-        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+        String input = mInput.getText().toString().trim();
+        if (isEmptyWord(input, false)) return;
+        //if(StringUtils.isMoreThanOneWord(input))return;
+        translate();
     }
 
     private void addListener() {
-        mInput.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == 6) {
-                final String input = mInput.getText().toString().trim();
-                if (!TextUtils.isEmpty(input)) {
-                    mPresenter.executeSearch(input);
-                    return false;
-                } else {
-                    Toast.makeText(MainActivity.this, "please input words !", Toast.LENGTH_SHORT).show();
-                    return true;
-                }
+        mInput.setOnKeyListener((v, keyCode, event) -> {
+            if ((event.getAction() == KeyEvent.ACTION_DOWN) && (keyCode == KeyEvent.KEYCODE_ENTER)) {
+                MobclickAgent.onEvent(this, "action_translate_by_keyboard");
+                mInput.dismissDropDown();
+                translate();
+                return true;
             }
             return false;
         });
+
+        mInput.addTextChangedListener(new TextWatcher() {
+            private String mTemp;
+
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                mTemp = s.toString();
+                mTvClear.setVisibility(mTemp.isEmpty() ? View.INVISIBLE : View.VISIBLE);
+            }
+        });
     }
 
+    private void addTranslateWaySelectListener() {
+        mSpTranslateWay.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                switch (position) {
+                    case 0:
+                        selectEngine(ETranslateFrom.BAI_DU);
+                        MobclickAgent.onEvent(getApplicationContext(), "way_baidu");
+                        break;
+                    case 1:
+                        selectEngine(ETranslateFrom.YOU_DAO);
+                        MobclickAgent.onEvent(getApplicationContext(), "way_youdao");
+                        break;
+                    case 2:
+                        selectEngine(ETranslateFrom.JIN_SHAN);
+                        MobclickAgent.onEvent(getApplicationContext(), "way_jinshan");
+                        break;
+                    case 3:
+                        selectEngine(ETranslateFrom.GOOGLE);
+                        MobclickAgent.onEvent(getApplicationContext(), "way_google");
+                        break;
+                }
+            }
 
-    private boolean isFavorite;
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
 
-    /**
-     * 生成翻译结果最下面的 view , 用于显示当前翻译结果对应的翻译引擎以及收藏按钮
-     * @param result 翻译结果
-     * @return 对应的 view
-     */
-    private View getResultBottomView(AbsResult result) {
-        if (result == null) return null;
-        View view = LayoutInflater.from(MainActivity.this).inflate(R.layout.translate_result_bottom, null);
-        mIvFavorite = ButterKnife.findById(view, R.id.iv_favorite);
-        mTvResultEngineInfo = ButterKnife.findById(view, R.id.tv_result_engine_info);
+            }
+        });
+    }
 
-        mIvFavorite.setTag(result);
-        mIvFavorite.setOnClickListener(v -> onClickFavorite(v));
-        mTvResultEngineInfo.setText("结果来自 " + SpUtils.getTranslateEngineWay(MainActivity.this).getName() + "翻译");
+    private boolean checkInput(String input) {
+        if (isEmptyWord(input, true)) return false;
+        //不检查输入的字符串是不是超过两个
+//        if (StringUtils.isMoreThanOneWord(input)){
+//            String msg = getString(R.string.msg_not_support_sentence);
+//            DialogUtil.showSingleMessage(this, msg, getString(R.string.action_know));
+//            return false;
+//        }
+        return true;
+    }
 
-        if (mPresenter.isFavorite(result.wrapQuery())) {
-            mIvFavorite.setImageResource(R.drawable.ic_favorite_pink_24dp);
-            isFavorite = true;
-        } else {
-            mIvFavorite.setImageResource(R.drawable.ic_favorite_border_black_24dp);
-            isFavorite = false;
+    private boolean isEmptyWord(String input, boolean withEmptyPoint) {
+        if (TextUtils.isEmpty(input)) {
+            if (withEmptyPoint) {
+                Toast.makeText(MainActivity.this, R.string.tip_input_words, Toast.LENGTH_SHORT).show();
+            }
+            return true;
         }
-        return view;
+        return false;
     }
 
-    public void onClickFavorite(View v) {
-        AbsResult entity = (AbsResult) v.getTag();
-        if (isFavorite) {
-            mPresenter.unFavoriteWord(entity.getResult());
-            Toast.makeText(MainActivity.this, "取消收藏", Toast.LENGTH_SHORT).show();
-            mIvFavorite.setImageResource(R.drawable.ic_favorite_border_black_24dp);
-            isFavorite = false;
-        } else {
-            mPresenter.favoriteWord(entity.getResult());
-            Toast.makeText(MainActivity.this, "收藏成功", Toast.LENGTH_SHORT).show();
-            mIvFavorite.setImageResource(R.drawable.ic_favorite_pink_24dp);
-            isFavorite = true;
+    private void translate() {
+        Log.i(TAG, "execute translate");
+        closeKeyboard();
+        final String input = mInput.getText().toString().trim();
+        if (checkInput(input)) {
+            mPresenter.executeSearch(input);
         }
     }
+
+
     /**
      * set text to EditText view and move curse to last
+     *
      * @param text which need to translate
      */
     @Override
-    public void onInitSearchText(String text){
+    public void onInitSearchText(String text) {
         mInput.setText(text);
         ViewUtil.setEditTextSelectionToEnd(mInput);
+        mTvClear.setVisibility(View.VISIBLE);
     }
 
     @Override
     public void onPrepareTranslate() {
         mList.removeAllViews();
-        mList.addView(ViewUtil.getWordsView(MainActivity.this, "正在翻译...", R.color.gray));
+        mRlAction.setVisibility(View.GONE);
+        mBtTranslate.setText(R.string.action_translating);
+        mBtTranslate.setEnabled(false);
+        mIvFavorite.setEnabled(false);
+        mIvSound.setEnabled(false);
+        mIvPaste.setEnabled(false);
     }
 
-    @Override
-    public void onClearResultViews() {
-        mList.removeAllViews();
-    }
-
-    @Override
-    public void appendBottomView(AbsResult result) {
-        View resultBottomView = getResultBottomView(result);
-        if (resultBottomView != null) {
-            mList.addView(resultBottomView);
-        }
-    }
 
     @Override
     public void onError(Throwable e) {
-        mList.addView(ViewUtil.getWordsView(MainActivity.this, e.getMessage(), android.R.color.holo_red_light));
+        String msg;
+        if (e instanceof JsonSyntaxException) {
+            msg = getString(R.string.tip_fail_translate) + (BuildConfig.DEBUG ? "  " + e.getMessage() : "");
+        } else if (e instanceof UnknownHostException) {
+            msg = getString(R.string.tip_unknown_host) + (BuildConfig.DEBUG ? "  " + e.getMessage() : "");
+        } else {
+            msg = getString(R.string.tip_unknown) + (BuildConfig.DEBUG ? "  " + e.getMessage() : "");
+            e.printStackTrace();
+        }
+        mPresenter.trackTranslateFail(msg);
+        mList.addView(ViewUtil.getWordsView(MainActivity.this, msg, android.R.color.holo_red_light, false));
+        mBtTranslate.setEnabled(true);
+        mBtTranslate.setText(R.string.action_translate);
     }
 
     @Override
     public void addExplainItem(String explain) {
-        mList.addView(ViewUtil.getWordsView(MainActivity.this, explain, android.R.color.black));
+        mList.addView(ViewUtil.getWordsView(MainActivity.this, explain, R.color.color_explain, true));
     }
 
     @Override
-    public void initTranslateEngineSetting(Menu menu,ETranslateFrom from) {
-        switch (from) {
-            case BAI_DU:
-                menu.findItem(R.id.translate_baidu).setChecked(true);
-                break;
-            case JIN_SHAN:
-                menu.findItem(R.id.translate_jinshan).setChecked(true);
-                break;
-            case YOU_DAO:
-                menu.findItem(R.id.translate_youdao).setChecked(true);
-                break;
+    public void initTranslateEngineSetting(ETranslateFrom from) {
+        mSpTranslateWay.setSelection(from.getIndex(), true);
+    }
+
+    @OnClick(R.id.bt_translate)
+    public void onClickTranslate(View view) {
+        MobclickAgent.onEvent(getApplicationContext(), "action_translate");
+        translate();
+    }
+
+    @OnClick(R.id.tv_clear)
+    public void onClickClear(View view) {
+        MobclickAgent.onEvent(getApplicationContext(), "action_clear");
+        resetView();
+        InputMethodUtils.openSoftKeyboard(this, mInput);
+    }
+
+    @OnClick(R.id.tv_point)
+    public void onClickInputPoint(View view) {
+        MobclickAgent.onEvent(getApplicationContext(), "action_input_point");
+        mInput.requestFocus();
+    }
+
+    private void resetView() {
+        clearInputContent();
+        mPresenter.clearClipboard();
+        resetTranslateResultArea();
+    }
+
+    private void resetTranslateResultArea() {
+        isFavorite = false;
+        mIvFavorite.setImageResource(R.drawable.ic_favorite_border_black_24dp);
+        mIvFavorite.setTag(null);
+        mIvSound.setTag(null);
+        mList.removeAllViews();
+        mRlAction.setVisibility(View.GONE);
+    }
+
+    private void clearInputContent() {
+        String content = mInput.getText().toString();
+        if (!TextUtils.isEmpty(content)) {
+            mInput.setText("");
         }
     }
 
+    @OnClick(R.id.iv_favorite)
+    public void onClickFavorite(final View view) {
+        AnswerUtil.actionFavorite("main");
+        mPresenter.startFavoriteAnim(view, new BasePresenter.AnimationEndListener() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                Object obj = view.getTag();
+                if (obj != null && obj instanceof Result) {
+                    Result entity = (Result) obj;
+                    if (isFavorite) {
+                        mPresenter.unFavoriteWord(entity);
+                        mIvFavorite.setImageResource(R.drawable.ic_favorite_border_black_24dp);
+                        isFavorite = false;
+                    } else {
+                        mPresenter.favoriteWord(entity);
+                        mIvFavorite.setImageResource(R.drawable.ic_favorite_pink_24dp);
+                        isFavorite = true;
+                    }
+                }
+            }
+        });
+        MobclickAgent.onEvent(getApplicationContext(), "favorite_main");
+    }
+
+    @OnClick(R.id.iv_paste)
+    public void onClickPaste(View view) {
+        closeKeyboard();
+        Toast.makeText(MainActivity.this, "长按翻译结果可复制", Toast.LENGTH_SHORT).show();
+        MobclickAgent.onEvent(getApplicationContext(), "action_paste");
+    }
+
+    @OnClick(R.id.iv_sound)
+    public void onClickSound(View view) {
+        Object obj = view.getTag();
+        if (obj != null && obj instanceof Result) {
+            Result entity = (Result) obj;
+            String fileName = entity.getMp3FileName();
+            String mp3Url = entity.getEnMp3();
+            mPresenter.playSound(fileName, mp3Url);
+        }
+        mPresenter.startSoundAnim(view);
+        MobclickAgent.onEvent(getApplicationContext(), "sound_main_activity");
+        AnswerUtil.actionSound("main");
+    }
+
     @Override
-    public void initDurationTimeSetting(Menu menu,EDurationTipTime durationTime) {
-        switch (durationTime) {
-            case ONE_SECOND:
-                menu.findItem(R.id.duration_one_second).setChecked(true);
-                break;
-            case FOUR_SECOND:
-                menu.findItem(R.id.duration_four_second).setChecked(true);
-                break;
-            case SIX_SECOND:
-                menu.findItem(R.id.duration_six_second).setChecked(true);
-                break;
-            case TEN_SECOND:
-                menu.findItem(R.id.duration_ten_second).setChecked(true);
-                break;
+    public void closeKeyboard() {
+        InputMethodUtils.closeSoftKeyboard(mInput);
+    }
+
+    @Override
+    public void showPlaySound() {
+        mIvSound.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    public void hidePlaySound() {
+        mIvSound.setVisibility(View.GONE);
+    }
+
+    @Override
+    public void addTagForView(Result result) {
+        mIvFavorite.setTag(result);
+        mIvSound.setTag(result);
+    }
+
+    @Override
+    public void initWithFavorite() {
+        mIvFavorite.setImageResource(R.drawable.ic_favorite_pink_24dp);
+        isFavorite = true;
+    }
+
+    @Override
+    public void initWithNotFavorite() {
+        mIvFavorite.setImageResource(R.drawable.ic_favorite_border_black_24dp);
+        isFavorite = false;
+    }
+
+    @Override
+    public void fillDayline(IDayLine entity) {
+        mTvDayline.setText(entity.content());
+        mTvDaylineNote.setText(entity.note());
+        mIvSoundDayline.setTag(entity);
+    }
+
+    @Override
+    public void attachLocalDic(List<String> dic) {
+        ArrayAdapter<String> wordAdapter = new ArrayAdapter<>(MainActivity.this,
+                android.R.layout.simple_list_item_1,
+                android.R.id.text1,
+                dic);
+        mInput.setAdapter(wordAdapter);
+        mInput.setThreshold(1);
+        mInput.setDropDownHeight(Utils.dp2px(this,200));
+        mInput.setOnItemClickListener((parent, view, position, id) -> translate());
+    }
+
+    @OnClick(R.id.iv_sound_dayline)
+    public void onClickDaylineSound(View view) {
+        MobclickAgent.onEvent(getApplicationContext(), "sound_dayline_activity");
+        Object obj = view.getTag();
+        if (obj != null && obj instanceof IDayLine) {
+            IDayLine entity = (IDayLine) obj;
+            String fileName = JinShanResult.getFileName(entity.tts());
+            String mp3Url = entity.tts();
+            mPresenter.playSound(fileName, mp3Url);
+        }
+        mPresenter.startSoundAnim(view);
+    }
+
+    @Override
+    public void onTranslateComplete() {
+        mBtTranslate.setEnabled(true);
+        mBtTranslate.setText(R.string.action_translate);
+        mRlAction.setVisibility(View.VISIBLE);
+
+        mIvFavorite.setEnabled(true);
+        mIvSound.setEnabled(true);
+        mIvPaste.setEnabled(true);
+
+        mPresenter.checkAndPlayEggs();
+    }
+
+    private void startListenService() {
+        mPresenter.startListenClipboardService();
+    }
+
+
+    private void initSpinner() {
+        ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
+                R.array.translate_way, R.layout.spinner_drop_list_title);
+        adapter.setDropDownViewResource(R.layout.spinner_drop_list_item);
+        mSpTranslateWay.setAdapter(adapter);
+    }
+
+    public void onClickBottomSheet() {
+        if (mBottomSheetBehavior == null) {
+            return;
+        }
+        if (mBottomSheetBehavior.getState() == BottomSheetBehavior.STATE_EXPANDED) {
+            mBottomSheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+        } else {
+            mBottomSheetBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
         }
     }
 
+    @OnClick(android.R.id.input)
+    public void onClickInput(View view) {
+
+    }
+
+    /**
+     * 检查bottom sheet 是否展开 如果是 折叠 返回 true
+     *
+     * @return
+     */
+    private boolean checkBottomSheetIsExpandedAndReset() {
+        if (mBottomSheetBehavior == null) {
+            return false;
+        }
+        if (mBottomSheetBehavior.getState() == BottomSheetBehavior.STATE_EXPANDED) {
+            mBottomSheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+            return true;
+        }
+        return false;
+    }
+
     @Override
-    public void initIntervalTimeSetting(Menu menu,EIntervalTipTime intervalTime) {
-        switch (intervalTime) {
-            case ONE_MINUTE:
-                menu.findItem(R.id.interval_one_minute).setChecked(true);
-                break;
-            case THREE_MINUTE:
-                menu.findItem(R.id.interval_three_minute).setChecked(true);
-                break;
-            case FIVE_MINUTE:
-                menu.findItem(R.id.interval_five_minute).setChecked(true);
-                break;
-            case TEN_MINUTE:
-                menu.findItem(R.id.interval_ten_minute).setChecked(true);
-                break;
-            case THIRTY_MINUTE:
-                menu.findItem(R.id.interval_thirty_minute).setChecked(true);
-                break;
+    public void onBackPressed() {
+        if (!checkBottomSheetIsExpandedAndReset()) {
+            super.onBackPressed();
         }
     }
+    LottieAnimationView mAnimView;
 
     @Override
-    public void initReciteSetting(Menu menu, boolean isOpen) {
-        menu.findItem(R.id.menu_use_recite_or_not).setChecked(isOpen);
-        menu.findItem(R.id.menu_interval_tip_time).setVisible(isOpen);
+    public void playNewYearAnim(){
+        if(mAnimView == null){
+            int size = Utils.dp2px(this,300);
+            mAnimView = new LottieAnimationView(this);
+            mAnimView.setAnimation("lottie/new_year_fire.json");
+            FrameLayout root = (FrameLayout) getWindow().getDecorView();
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size,size);
+            params.gravity = Gravity.CENTER;
+            root.addView(mAnimView,params);
+        }
+        mAnimView.setVisibility(View.VISIBLE);
+        mAnimView.addAnimatorListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                super.onAnimationEnd(animation);
+                hideAnim();
+            }
 
-
-        menu.findItem(R.id.menu_use_recite_or_not).setVisible(false);
-        menu.findItem(R.id.menu_interval_tip_time).setVisible(false);
-        SpUtils.setReciteOpenOrNot(this,false);
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                super.onAnimationCancel(animation);
+                hideAnim();
+            }
+        });
+        mAnimView.playAnimation();
     }
 
-    @Override
-    public void initJITSetting(Menu menu, boolean isOpen) {
-        menu.findItem(R.id.menu_open_jit_or_nor).setChecked(isOpen);
+    private void hideAnim(){
+        mAnimView.setVisibility(View.GONE);
+        mAnimView.setProgress(0);
+        mAnimView.cancelAnimation();
     }
 }
