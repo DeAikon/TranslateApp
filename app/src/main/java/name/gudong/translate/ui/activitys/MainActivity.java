@@ -132,11 +132,10 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
         checkVersion();
         setUpDayline(false);
         checkIntent();
-        boolean needShowGuidePermissionDialog = checkOverPermission();
-        if(needShowGuidePermissionDialog){
-            showGuidePermissionDialog();
-        }else{
+        if (Utils.checkDrawOverlaysPermissionGranted(this)) {
             guideCheck();
+        } else {
+            showGuidePermissionDialog();
         }
     }
 
@@ -190,20 +189,6 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
         }
     }
 
-    private boolean checkOverPermission() {
-        if (Utils.isAndroidM()) {
-            if (!SpUtils.hasGrantDrawOverlays(this) && !Settings.canDrawOverlays(this)) {
-                return true;
-            } else {
-                SpUtils.setDrawOverlays(this, true);
-                return false;
-            }
-        } else {
-            SpUtils.setDrawOverlays(this, true);
-            return false;
-        }
-    }
-
     /**
      * 弹出引导用户打开悬浮权限的 dialog
      */
@@ -223,7 +208,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
                 .show();
     }
 
-    private void showFloatTranslateExplainDialog(){
+    private void showFloatTranslateExplainDialog() {
         DialogUtil.showGuideFloatTranslate(this);
     }
 
@@ -238,7 +223,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
     }
 
     private void initConfig() {
-        if(SpUtils.isAutoCompleteInputWords(this)){
+        if (SpUtils.isAutoCompleteInputWords(this)) {
             mPresenter.analysisLocalDic();
         }
     }
@@ -326,7 +311,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
 
 
     private void selectEngine(ETranslateFrom way) {
-        SpUtils.setTranslateEngine(this, way.name());
+        SpUtils.setTranslateEngine(this, way);
         checkInputAndResearch();
     }
 
@@ -378,24 +363,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
         mSpTranslateWay.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                switch (position) {
-                    case 0:
-                        selectEngine(ETranslateFrom.BAI_DU);
-                        MobclickAgent.onEvent(getApplicationContext(), "way_baidu");
-                        break;
-                    case 1:
-                        selectEngine(ETranslateFrom.YOU_DAO);
-                        MobclickAgent.onEvent(getApplicationContext(), "way_youdao");
-                        break;
-                    case 2:
-                        selectEngine(ETranslateFrom.JIN_SHAN);
-                        MobclickAgent.onEvent(getApplicationContext(), "way_jinshan");
-                        break;
-                    case 3:
-                        selectEngine(ETranslateFrom.GOOGLE);
-                        MobclickAgent.onEvent(getApplicationContext(), "way_google");
-                        break;
-                }
+                selectEngine((ETranslateFrom) mSpTranslateWay.getAdapter().getItem(position));
             }
 
             @Override
@@ -483,8 +451,8 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
     }
 
     @Override
-    public void initTranslateEngineSetting(ETranslateFrom from) {
-        mSpTranslateWay.setSelection(from.getIndex(), true);
+    public void initTranslateSelect(int select) {
+        mSpTranslateWay.setSelection(select, true);
     }
 
     @OnClick(R.id.bt_translate)
@@ -621,7 +589,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
                 dic);
         mInput.setAdapter(wordAdapter);
         mInput.setThreshold(1);
-        mInput.setDropDownHeight(Utils.dp2px(this,200));
+        mInput.setDropDownHeight(Utils.dp2px(this, 200));
         mInput.setOnItemClickListener((parent, view, position, id) -> translate());
     }
 
@@ -657,10 +625,10 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
 
 
     private void initSpinner() {
-        ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
-                R.array.translate_way, R.layout.spinner_drop_list_title);
-        adapter.setDropDownViewResource(R.layout.spinner_drop_list_item);
-        mSpTranslateWay.setAdapter(adapter);
+        List<ETranslateFrom> translateWay = mPresenter.getTranslateWaysList();
+        ArrayAdapter<ETranslateFrom> arrayAdapter = new ArrayAdapter<>(this, R.layout.spinner_drop_list_title, translateWay);
+        arrayAdapter.setDropDownViewResource(R.layout.spinner_drop_list_item);
+        mSpTranslateWay.setAdapter(arrayAdapter);
     }
 
     public void onClickBottomSheet() {
@@ -701,18 +669,19 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
             super.onBackPressed();
         }
     }
+
     LottieAnimationView mAnimView;
 
     @Override
-    public void playNewYearAnim(){
-        if(mAnimView == null){
-            int size = Utils.dp2px(this,300);
+    public void playNewYearAnim() {
+        if (mAnimView == null) {
+            int size = Utils.dp2px(this, 300);
             mAnimView = new LottieAnimationView(this);
             mAnimView.setAnimation("lottie/new_year_fire.json");
             FrameLayout root = (FrameLayout) getWindow().getDecorView();
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size,size);
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
             params.gravity = Gravity.CENTER;
-            root.addView(mAnimView,params);
+            root.addView(mAnimView, params);
         }
         mAnimView.setVisibility(View.VISIBLE);
         mAnimView.addAnimatorListener(new AnimatorListenerAdapter() {
@@ -731,7 +700,7 @@ public class MainActivity extends BaseActivity<MainPresenter> implements IMainVi
         mAnimView.playAnimation();
     }
 
-    private void hideAnim(){
+    private void hideAnim() {
         mAnimView.setVisibility(View.GONE);
         mAnimView.setProgress(0);
         mAnimView.cancelAnimation();
